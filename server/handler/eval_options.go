@@ -46,8 +46,8 @@ type PullEvaluationOptions struct {
 	// content and repository existence to users without direct access; see the README.
 	AllowPrivateRemotes bool `yaml:"allow_private_remotes"`
 
-	// StatusCheckContext will be used to create the status context. It will be used in the following
-	// pattern: <StatusCheckContext>: <Base Branch Name>
+	// StatusCheckContext is the base name for status contexts. See the
+	// StatusContext method for how the posted context is derived from it.
 	StatusCheckContext string `yaml:"status_check_context"`
 
 	// ExpandRequiredReviewers enables a UI feature where the details page
