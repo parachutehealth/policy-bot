@@ -65,21 +65,25 @@ func TestParseConfigPostsBareContextForDefaultBranchPolicy(t *testing.T) {
 func TestEvaluatePolicyFailsWhenHeadIsSharedWithDefaultBranchPolicy(t *testing.T) {
 	approved := &stubEvaluator{result: common.Result{Status: common.StatusApproved, StatusDescription: "All rules are approved"}}
 
-	t.Run("sharedHead", func(t *testing.T) {
-		ec := makeEvalContext(true)
-		ec.Options.PolicyFromDefaultBranch = true
-		ec.Client = pullsForCommitClient(t, http.StatusOK, `[
-			{"number": 42, "state": "open", "head": {"sha": "abc123"}},
-			{"number": 7, "state": "open", "head": {"sha": "abc123"}}
-		]`)
+	pending := &stubEvaluator{result: common.Result{Status: common.StatusPending, StatusDescription: "0/1 rules approved"}}
 
-		_, err := ec.EvaluatePolicy(context.Background(), approved)
-		require.NoError(t, err)
-		require.NotNil(t, ec.Status)
-		assert.Equal(t, "failure", ec.Status.GetState())
-		assert.Equal(t, "policy-bot", ec.Status.GetContext())
-		assert.Contains(t, ec.Status.GetDescription(), "#7")
-	})
+	for name, evaluator := range map[string]*stubEvaluator{"sharedHeadApproved": approved, "sharedHeadPending": pending} {
+		t.Run(name, func(t *testing.T) {
+			ec := makeEvalContext(true)
+			ec.Options.PolicyFromDefaultBranch = true
+			ec.Client = pullsForCommitClient(t, http.StatusOK, `[
+				{"number": 42, "state": "open", "head": {"sha": "abc123"}},
+				{"number": 7, "state": "open", "head": {"sha": "abc123"}}
+			]`)
+
+			_, err := ec.EvaluatePolicy(context.Background(), evaluator)
+			require.NoError(t, err)
+			require.NotNil(t, ec.Status)
+			assert.Equal(t, "failure", ec.Status.GetState())
+			assert.Equal(t, "policy-bot", ec.Status.GetContext())
+			assert.Contains(t, ec.Status.GetDescription(), "#7")
+		})
+	}
 
 	t.Run("onlyUnrelatedPulls", func(t *testing.T) {
 		ec := makeEvalContext(true)
