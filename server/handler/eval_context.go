@@ -158,8 +158,47 @@ func (ec *EvalContext) EvaluatePolicy(ctx context.Context, evaluator common.Eval
 		return result, err
 	}
 
+	if ec.Options.PolicyFromDefaultBranch {
+		shared, err := ec.findOpenPullsWithSameHead(ctx)
+		if err != nil {
+			msg := "Failed to check for other pull requests with the same head commit"
+			ec.PostStatus(ctx, "error", msg)
+			return result, errors.Wrap(err, msg)
+		}
+		if len(shared) > 0 {
+			// Without a branch suffix, PRs with the same head commit and
+			// different bases share one status. A success here could satisfy
+			// the required check for a PR that this evaluation did not cover.
+			// Fail for every result, not just success, so that whichever PR
+			// is evaluated last, the shared status explains why it is blocked.
+			statusState = "failure"
+			statusDescription = fmt.Sprintf("Open pull request #%d has the same head commit; close it to continue", shared[0])
+		}
+	}
+
 	ec.PostStatus(ctx, statusState, statusDescription)
 	return result, nil
+}
+
+// findOpenPullsWithSameHead returns the numbers of other open pull requests
+// whose head commit is the head commit of the evaluated pull request.
+func (ec *EvalContext) findOpenPullsWithSameHead(ctx context.Context) ([]int, error) {
+	owner := ec.PullContext.RepositoryOwner()
+	repo := ec.PullContext.RepositoryName()
+	sha := ec.PullContext.HeadSHA()
+
+	prs, _, err := ec.Client.PullRequests.ListPullRequestsWithCommit(ctx, owner, repo, sha, &github.ListOptions{PerPage: 100})
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to list pull requests for SHA %s", sha)
+	}
+
+	var shared []int
+	for _, pr := range prs {
+		if pr.GetState() == "open" && pr.GetHead().GetSHA() == sha && pr.GetNumber() != ec.PullContext.Number() {
+			shared = append(shared, pr.GetNumber())
+		}
+	}
+	return shared, nil
 }
 
 // RunPostEvaluateActions executes additional actions that should happen after
