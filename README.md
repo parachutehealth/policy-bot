@@ -1180,9 +1180,9 @@ workflows. When enabled, `policy-bot` loads the policy from the repository's
 default branch for every pull request and posts statuses under the bare
 `status_check_context` with no branch suffix, so the stable name can be used as
 a required check. Because statuses attach to commits, pull requests with the
-same head commit share this status, so `policy-bot` only posts a successful
-status when no other open pull request has the same head commit. Otherwise, it
-posts a failure until the other pull requests are closed.
+same head commit share this status. When another open pull request has the same
+head commit, `policy-bot` posts a failure instead of the evaluation result until
+the other pull requests are closed.
 
 Before enabling this option, consider the following:
 

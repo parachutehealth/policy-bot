@@ -158,7 +158,7 @@ func (ec *EvalContext) EvaluatePolicy(ctx context.Context, evaluator common.Eval
 		return result, err
 	}
 
-	if statusState == "success" && ec.Options.PolicyFromDefaultBranch {
+	if ec.Options.PolicyFromDefaultBranch {
 		shared, err := ec.findOpenPullsWithSameHead(ctx)
 		if err != nil {
 			msg := "Failed to check for other pull requests with the same head commit"
@@ -169,6 +169,8 @@ func (ec *EvalContext) EvaluatePolicy(ctx context.Context, evaluator common.Eval
 			// Without a branch suffix, PRs with the same head commit and
 			// different bases share one status. A success here could satisfy
 			// the required check for a PR that this evaluation did not cover.
+			// Fail for every result, not just success, so that whichever PR
+			// is evaluated last, the shared status explains why it is blocked.
 			statusState = "failure"
 			statusDescription = fmt.Sprintf("Open pull request #%d has the same head commit; close it to continue", shared[0])
 		}
