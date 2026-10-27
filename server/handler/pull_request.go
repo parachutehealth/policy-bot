@@ -57,6 +57,11 @@ func (h *PullRequest) Handle(ctx context.Context, eventType, deliveryID string, 
 		}
 	case "labeled", "unlabeled":
 		t = common.TriggerLabel
+	case "closed":
+		if h.PullOpts.PolicyFromDefaultBranch {
+			return h.evaluatePullsWithSameHead(ctx, installationID, event)
+		}
+		return nil
 	default:
 		return nil
 	}
@@ -67,4 +72,35 @@ func (h *PullRequest) Handle(ctx context.Context, eventType, deliveryID string, 
 		Number: event.GetPullRequest().GetNumber(),
 		Value:  event.GetPullRequest(),
 	})
+}
+
+// evaluatePullsWithSameHead re-evaluates the open pull requests that have the
+// same head commit as a closed pull request. When statuses use a bare context,
+// these pull requests fail while the closed one is open, so they need a new
+// evaluation once it closes.
+func (h *PullRequest) evaluatePullsWithSameHead(ctx context.Context, installationID int64, event github.PullRequestEvent) error {
+	owner := event.GetRepo().GetOwner().GetLogin()
+	repo := event.GetRepo().GetName()
+	sha := event.GetPullRequest().GetHead().GetSHA()
+
+	client, err := h.NewInstallationClient(installationID)
+	if err != nil {
+		return err
+	}
+
+	prs, _, err := client.PullRequests.ListPullRequestsWithCommit(ctx, owner, repo, sha, &github.ListOptions{PerPage: 100})
+	if err != nil {
+		return errors.Wrapf(err, "failed to list pull requests for SHA %s", sha)
+	}
+
+	for _, pr := range prs {
+		if pr.GetState() != "open" || pr.GetHead().GetSHA() != sha {
+			continue
+		}
+		loc := pull.Locator{Owner: owner, Repo: repo, Number: pr.GetNumber(), Value: pr}
+		if err := h.Evaluate(ctx, installationID, common.TriggerAll, loc); err != nil {
+			return err
+		}
+	}
+	return nil
 }

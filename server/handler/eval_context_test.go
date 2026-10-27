@@ -17,9 +17,14 @@ package handler
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
+	"github.com/google/go-github/v93/github"
 	"github.com/palantir/policy-bot/policy/common"
+	"github.com/palantir/policy-bot/pull"
 	"github.com/palantir/policy-bot/pull/pulltest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,6 +60,86 @@ func TestParseConfigPostsBareContextForDefaultBranchPolicy(t *testing.T) {
 	assert.Nil(t, evaluator)
 	require.NotNil(t, ec.Status)
 	assert.Equal(t, "policy-bot", ec.Status.GetContext())
+}
+
+func TestEvaluatePolicyFailsWhenHeadIsSharedWithDefaultBranchPolicy(t *testing.T) {
+	approved := &stubEvaluator{result: common.Result{Status: common.StatusApproved, StatusDescription: "All rules are approved"}}
+
+	t.Run("sharedHead", func(t *testing.T) {
+		ec := makeEvalContext(true)
+		ec.Options.PolicyFromDefaultBranch = true
+		ec.Client = pullsForCommitClient(t, http.StatusOK, `[
+			{"number": 42, "state": "open", "head": {"sha": "abc123"}},
+			{"number": 7, "state": "open", "head": {"sha": "abc123"}}
+		]`)
+
+		_, err := ec.EvaluatePolicy(context.Background(), approved)
+		require.NoError(t, err)
+		require.NotNil(t, ec.Status)
+		assert.Equal(t, "failure", ec.Status.GetState())
+		assert.Equal(t, "policy-bot", ec.Status.GetContext())
+		assert.Contains(t, ec.Status.GetDescription(), "#7")
+	})
+
+	t.Run("onlyUnrelatedPulls", func(t *testing.T) {
+		ec := makeEvalContext(true)
+		ec.Options.PolicyFromDefaultBranch = true
+		ec.Client = pullsForCommitClient(t, http.StatusOK, `[
+			{"number": 42, "state": "open", "head": {"sha": "abc123"}},
+			{"number": 8, "state": "open", "head": {"sha": "def456"}},
+			{"number": 9, "state": "closed", "head": {"sha": "abc123"}}
+		]`)
+
+		_, err := ec.EvaluatePolicy(context.Background(), approved)
+		require.NoError(t, err)
+		require.NotNil(t, ec.Status)
+		assert.Equal(t, "success", ec.Status.GetState())
+	})
+
+	t.Run("listError", func(t *testing.T) {
+		ec := makeEvalContext(true)
+		ec.Options.PolicyFromDefaultBranch = true
+		ec.Client = pullsForCommitClient(t, http.StatusInternalServerError, `{"message": "boom"}`)
+
+		_, err := ec.EvaluatePolicy(context.Background(), approved)
+		require.Error(t, err)
+		require.NotNil(t, ec.Status)
+		assert.Equal(t, "error", ec.Status.GetState())
+	})
+
+	t.Run("branchContextSkipsCheck", func(t *testing.T) {
+		ec := makeEvalContext(true) // nil client: any API call panics
+
+		_, err := ec.EvaluatePolicy(context.Background(), approved)
+		require.NoError(t, err)
+		require.NotNil(t, ec.Status)
+		assert.Equal(t, "success", ec.Status.GetState())
+		assert.Equal(t, "policy-bot: main", ec.Status.GetContext())
+	})
+}
+
+type stubEvaluator struct {
+	result common.Result
+}
+
+func (e *stubEvaluator) Trigger() common.Trigger { return common.TriggerAll }
+
+func (e *stubEvaluator) Evaluate(context.Context, pull.Context) common.Result { return e.result }
+
+func pullsForCommitClient(t *testing.T, statusCode int, body string) *github.Client {
+	client, err := github.NewClient(
+		github.WithTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			assert.Equal(t, "/repos/testorg/testrepo/commits/abc123/pulls", req.URL.Path)
+			return &http.Response{
+				StatusCode: statusCode,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Request:    req,
+			}, nil
+		})),
+	)
+	require.NoError(t, err)
+	return client
 }
 
 func makeEvalContext(seenPolicy bool) *EvalContext {

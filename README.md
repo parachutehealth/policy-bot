@@ -1178,9 +1178,11 @@ receive the exact context the required check expects.
 The `options.policy_from_default_branch` server option supports these
 workflows. When enabled, `policy-bot` loads the policy from the repository's
 default branch for every pull request and posts statuses under the bare
-`status_check_context` with no branch suffix. Because all pull requests are
-evaluated against a single policy source, the branch suffix no longer carries
-a security property and the stable name can be used as a required check.
+`status_check_context` with no branch suffix, so the stable name can be used as
+a required check. Because statuses attach to commits, pull requests with the
+same head commit share this status, so `policy-bot` only posts a successful
+status when no other open pull request has the same head commit. Otherwise, it
+posts a failure until the other pull requests are closed.
 
 Before enabling this option, consider the following:
 
